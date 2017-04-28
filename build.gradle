@@ -1,0 +1,30 @@
+apply plugin: 'java'
+
+group = 'com.rabbitmq.common'
+version = '1.0-SNAPSHOT'
+
+description = """rabbitmq-log"""
+
+sourceCompatibility = 1.7
+targetCompatibility = 1.7
+tasks.withType(JavaCompile) {
+	options.encoding = 'UTF-8'
+}
+
+
+
+repositories {
+    maven {
+        url "https://10.69.32.99:8443/repository/maven-public/"
+    }
+    mavenCentral()
+}
+dependencies {
+    compile group: 'org.apache.logging.log4j', name: 'log4j-core', version:'2.7'
+    compile group: 'org.apache.logging.log4j', name: 'log4j-api', version:'2.7'
+    compile group: 'org.apache.logging.log4j', name: 'log4j-slf4j-impl', version:'2.7'
+    compile group: 'com.rabbitmq', name: 'amqp-client', version:'3.5.6'
+    compile group: 'commons-lang', name: 'commons-lang', version:'2.6'
+    compile group: 'commons-beanutils', name: 'commons-beanutils', version:'1.9.3'
+    compile group: 'org.apache.commons', name: 'commons-pool2', version:'2.4.2'
+}
