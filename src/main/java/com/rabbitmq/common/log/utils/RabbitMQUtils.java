@@ -29,6 +29,8 @@ public class RabbitMQUtils {
 	public RabbitMQUtils() {
 		connectionPool.setMaxIdle(10);
 		connectionPool.setMaxTotal(100);
+		channelPool.setMaxIdle(10);
+		channelPool.setMaxTotal(100);
 	}
 
 	/**
