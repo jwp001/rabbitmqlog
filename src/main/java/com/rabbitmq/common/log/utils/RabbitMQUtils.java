@@ -27,8 +27,8 @@ import java.util.concurrent.TimeoutException;
 public class RabbitMQUtils {
 
 	public RabbitMQUtils() {
-		pool.setMaxIdle(10);
-		pool.setMaxTotal(100);
+		connectionPool.setMaxIdle(10);
+		connectionPool.setMaxTotal(100);
 	}
 
 	/**
@@ -174,8 +174,7 @@ public class RabbitMQUtils {
 			byte[] message)
 			throws Exception {
 
-		Connection conn = pool.borrowObject();// 获取连接
-		Channel channel = getChannel(conn, exchangeName, routingKey, queueName);
+		Channel channel = getChannel(exchangeName, routingKey, queueName);
 
 		try {
 			if (!exchangeName.isEmpty() && !routingKey.isEmpty()) {// 有exchangeName和routingKey的情况
@@ -187,17 +186,17 @@ public class RabbitMQUtils {
 						message);
 			}
 		} finally {
-			if (channel != null)
-				channel.close();
-			pool.returnObject(conn);
+			if (channel != null) {
+				Connection connection = channel.getConnection();
+				channelPool.returnObject(channel);
+				connectionPool.returnObject(connection);
+			}
 		}
 	}
 
 	/**
 	 * 获取channel
 	 * 
-	 * @param conn
-	 *            连接
 	 * @param exchangeName
 	 *            exchange Name
 	 * @param routingKey
@@ -210,15 +209,13 @@ public class RabbitMQUtils {
 	 * @throws TimeoutException
 	 */
 	private Channel getChannel(
-			Connection conn,
 			String exchangeName,
 			String routingKey,
 			String queueName)
-			throws ParamIsNullException, IOException, TimeoutException {
+			throws Exception {
 		check(exchangeName, routingKey, queueName);// 校验入参
 
-		Channel channel = null;
-		channel = conn.createChannel();
+		Channel channel = channelPool.borrowObject();
 		if (!exchangeName.isEmpty() && !routingKey.isEmpty()) {// 有exchangeName和routingKey的情况
 			channel.exchangeDeclare(exchangeName, "direct", true);
 
@@ -307,10 +304,9 @@ public class RabbitMQUtils {
 			String queueName,
 			RabbitMQMessageHandler handler) throws Exception {
 
-		Connection conn = pool.borrowObject();// 获取连接
 		Channel channel = null;
 		try {
-			channel = getChannel(conn, exchangeName, routingKey,
+			channel = getChannel(exchangeName, routingKey,
 					queueName);
 			// channel.basicQos(1);// 实现公平调度的方式就是让每个消费者在同一时刻会分配一个任务。
 			// boolean durable = true;
@@ -328,7 +324,7 @@ public class RabbitMQUtils {
 					handler.setMessage(delivery.getBody());
 				} catch (ConsumerCancelledException e) {// 重连
 					Thread.sleep(500);// 半秒
-					channel = getChannel(conn, exchangeName, routingKey,
+					channel = getChannel(exchangeName, routingKey,
 							queueName);
 					consumer = new QueueingConsumer(channel);
 
@@ -347,14 +343,16 @@ public class RabbitMQUtils {
 				}
 			}
 		} finally {
-			if (channel != null)
-				channel.close();
-			pool.returnObject(conn);
+			if (channel != null) {
+				Connection connection = channel.getConnection();
+				channelPool.returnObject(channel);
+				connectionPool.returnObject(connection);
+			}
 		}
 	}
 
-	// 池实现
-	class RabbitPooledObjectFactory
+	// 连接池实现
+	class RabbitConnectionPooledObjectFactory
 			extends BasePooledObjectFactory<Connection> {
 
 		@Override
@@ -368,12 +366,30 @@ public class RabbitMQUtils {
 		}
 	}
 
+	// Channel池实现
+	class RabbitChannelPooledObjectFactory
+			extends BasePooledObjectFactory<Channel> {
+
+		@Override
+		public Channel create() throws Exception {
+			return connectionPool.borrowObject().createChannel();
+		}
+
+		@Override
+		public PooledObject<Channel> wrap(Channel obj) {
+			return new DefaultPooledObject<>(obj);
+		}
+	}
+
 	private final HashSet<ConnectionFactory> resourceSet = new HashSet<>();
 
 	private Logger log = LogManager.getLogger(getClass());
 
-	// 池
-	private final GenericObjectPool<Connection> pool = new GenericObjectPool<>(
-			new RabbitPooledObjectFactory());
+	// 连接池
+	private final GenericObjectPool<Connection> connectionPool = new GenericObjectPool<>(
+			new RabbitConnectionPooledObjectFactory());
 
+	// Channel池
+	private final GenericObjectPool<Channel> channelPool = new GenericObjectPool<>(
+			new RabbitChannelPooledObjectFactory());
 }
