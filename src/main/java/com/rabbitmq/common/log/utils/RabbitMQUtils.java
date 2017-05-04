@@ -27,10 +27,12 @@ import java.util.concurrent.TimeoutException;
 public class RabbitMQUtils {
 
 	public RabbitMQUtils() {
-		connectionPool.setMaxIdle(10);
-		connectionPool.setMaxTotal(100);
-		channelPool.setMaxIdle(10);
-		channelPool.setMaxTotal(100);
+		// connectionPool.setMaxIdle(10);
+		connectionPool.setMaxTotal(1000);
+		connectionPool.setMaxWaitMillis(60000);
+		// channelPool.setMaxIdle(10);
+		channelPool.setMaxTotal(1000);
+		// channelPool.setMaxWaitMillis(30000);
 	}
 
 	/**
@@ -176,6 +178,7 @@ public class RabbitMQUtils {
 			byte[] message)
 			throws Exception {
 
+		Connection connection = connectionPool.borrowObject();
 		Channel channel = getChannel(exchangeName, routingKey, queueName);
 
 		try {
@@ -189,8 +192,9 @@ public class RabbitMQUtils {
 			}
 		} finally {
 			if (channel != null) {
-				Connection connection = channel.getConnection();
 				channelPool.returnObject(channel);
+			}
+			if (connection != null) {
 				connectionPool.returnObject(connection);
 			}
 		}
@@ -198,7 +202,7 @@ public class RabbitMQUtils {
 
 	/**
 	 * 获取channel
-	 * 
+	 *
 	 * @param exchangeName
 	 *            exchange Name
 	 * @param routingKey
@@ -218,19 +222,23 @@ public class RabbitMQUtils {
 		check(exchangeName, routingKey, queueName);// 校验入参
 
 		Channel channel = channelPool.borrowObject();
-		if (!exchangeName.isEmpty() && !routingKey.isEmpty()) {// 有exchangeName和routingKey的情况
-			channel.exchangeDeclare(exchangeName, "direct", true);
+		try {
+			if (!exchangeName.isEmpty() && !routingKey.isEmpty()) {// 有exchangeName和routingKey的情况
+				channel.exchangeDeclare(exchangeName, "direct", true);
 
-			// 如果没有传queue，通过channel进行获取
-			if (StringUtils.isEmpty(queueName)) {
-				queueName = channel.queueDeclare().getQueue();
-			} else {
-				channel.queueDeclare(queueName, true, false, false,
-						null);
+				// 如果没有传queue，通过channel进行获取
+				if (StringUtils.isEmpty(queueName)) {
+					queueName = channel.queueDeclare().getQueue();
+				} else {
+					channel.queueDeclare(queueName, true, false, false,
+							null);
+				}
+				channel.queueBind(queueName, exchangeName, routingKey);
+			} else if (StringUtils.isNotEmpty(queueName)) {// 只有queue的情况
+				channel.queueDeclare(queueName, true, false, false, null);
 			}
-			channel.queueBind(queueName, exchangeName, routingKey);
-		} else if (StringUtils.isNotEmpty(queueName)) {// 只有queue的情况
-			channel.queueDeclare(queueName, true, false, false, null);
+		} catch (Exception e) {
+			return getChannel(exchangeName, routingKey, queueName);
 		}
 		return channel;
 	}
@@ -266,7 +274,7 @@ public class RabbitMQUtils {
 
 	/**
 	 * 循环连接工场，连上哪个算哪个
-	 * 
+	 *
 	 * @return Connection
 	 */
 	private Connection getConnection() throws ConnectException {
@@ -288,7 +296,7 @@ public class RabbitMQUtils {
 
 	/**
 	 * 接收
-	 * 
+	 *
 	 * @param exchangeName
 	 *            exchange Name
 	 * @param routingKey
@@ -307,7 +315,9 @@ public class RabbitMQUtils {
 			RabbitMQMessageHandler handler) throws Exception {
 
 		Channel channel = null;
+		Connection connection = null;
 		try {
+			connection = connectionPool.borrowObject();
 			channel = getChannel(exchangeName, routingKey,
 					queueName);
 			// channel.basicQos(1);// 实现公平调度的方式就是让每个消费者在同一时刻会分配一个任务。
@@ -346,8 +356,9 @@ public class RabbitMQUtils {
 			}
 		} finally {
 			if (channel != null) {
-				Connection connection = channel.getConnection();
 				channelPool.returnObject(channel);
+			}
+			if (connection != null) {
 				connectionPool.returnObject(connection);
 			}
 		}
@@ -359,12 +370,19 @@ public class RabbitMQUtils {
 
 		@Override
 		public Connection create() throws Exception {
-			return getConnection();
+			connectionThreadLocal.set(getConnection());
+			return connectionThreadLocal.get();
 		}
 
 		@Override
 		public PooledObject<Connection> wrap(Connection obj) {
 			return new DefaultPooledObject<>(obj);
+		}
+
+		@Override
+		public void destroyObject(PooledObject<Connection> p)
+				throws Exception {
+			p.getObject().close();
 		}
 	}
 
@@ -374,12 +392,43 @@ public class RabbitMQUtils {
 
 		@Override
 		public Channel create() throws Exception {
-			return connectionPool.borrowObject().createChannel();
+			try {
+				return connectionThreadLocal.get().createChannel();
+			} catch (Exception e) {
+				return connectionPool.borrowObject().createChannel();
+			}
 		}
 
 		@Override
 		public PooledObject<Channel> wrap(Channel obj) {
 			return new DefaultPooledObject<>(obj);
+		}
+
+		@Override
+		public void destroyObject(PooledObject<Channel> p)
+				throws Exception {
+			p.getObject().close();
+		}
+	}
+
+	class RabbitInfo {
+		Connection connection;
+		Channel channel;
+
+		public Connection getConnection() {
+			return connection;
+		}
+
+		public void setConnection(Connection connection) {
+			this.connection = connection;
+		}
+
+		public Channel getChannel() {
+			return channel;
+		}
+
+		public void setChannel(Channel channel) {
+			this.channel = channel;
 		}
 	}
 
@@ -394,4 +443,6 @@ public class RabbitMQUtils {
 	// Channel池
 	private final GenericObjectPool<Channel> channelPool = new GenericObjectPool<>(
 			new RabbitChannelPooledObjectFactory());
+
+	private static final ThreadLocal<Connection> connectionThreadLocal = new ThreadLocal<>();
 }

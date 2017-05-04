@@ -34,7 +34,7 @@
                 <Property name="userName">epc</Property>
                 <Property name="password">epc</Property>
                 <Property name="hostName">localhost</Property>
-                <Property name="port">5673</Property>
+                <Property name="port">5670</Property>
                 <Property name="virtualHost">/epc</Property>
             </Connection>
         </RabbitMQ>
